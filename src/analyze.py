@@ -5,6 +5,8 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from geoip import GeoResolver, asn_label, country_label
+
 
 def load_events(path):
     events = []
@@ -20,13 +22,13 @@ def load_events(path):
     return events
 
 
-def analyze(events, brute_threshold=5, top=10):
+def analyze(events, brute_threshold=5, top=10, geo=None):
     attempts = [e for e in events if e.get("event") == "login_attempt"]
     http = [e for e in events if e.get("event") == "http_request"]
     ips = {e["src_ip"] for e in events if "src_ip" in e}
     per_ip = Counter(e["src_ip"] for e in attempts)
     pairs = Counter(f'{e.get("username", "")}:{e.get("password", "")}' for e in attempts)
-    return {
+    report = {
         "total_events": len(events),
         "login_attempts": len(attempts),
         "unique_ips": len(ips),
@@ -41,6 +43,16 @@ def analyze(events, brute_threshold=5, top=10):
         "brute_force_ips": {ip: n for ip, n in per_ip.items() if n >= brute_threshold},
         "brute_threshold": brute_threshold,
     }
+    if geo is not None:
+        info = {ip: geo.lookup(ip) for ip in ips}
+        report["ip_info"] = info
+        countries, asns = Counter(), Counter()
+        for ip, n in per_ip.items():
+            countries[country_label(info[ip])] += n
+            asns[asn_label(info[ip])] += n
+        report["top_countries"] = countries.most_common(top)
+        report["top_asns"] = asns.most_common(top)
+    return report
 
 
 def _md(value):
@@ -53,14 +65,26 @@ def _table(title, rows, headers=("Value", "Count")):
     return "\n".join(out) + "\n"
 
 
+def _ip_table(r):
+    info = r["ip_info"]
+    out = ["### Top source IPs", "", "| IP | Attempts | Country | ASN |", "|---|---|---|---|"]
+    out += [f"| `{_md(ip)}` | {n} | {_md(country_label(info[ip]))} | "
+            f"{_md(asn_label(info[ip]))} |" for ip, n in r["top_ips"]] or ["| (none) | 0 | | |"]
+    return "\n".join(out) + "\n"
+
+
 def to_markdown(r):
+    geo = "ip_info" in r
     parts = [
         "# Honeypot Report\n",
         f"- **Total events:** {r['total_events']}",
         f"- **Login attempts:** {r['login_attempts']}",
         f"- **Unique source IPs:** {r['unique_ips']}",
         f"- **Attempts by service:** {r['services']}\n",
-        _table("Top source IPs", r["top_ips"], ("IP", "Attempts")),
+        _ip_table(r) if geo else _table("Top source IPs", r["top_ips"], ("IP", "Attempts")),
+        *([_table("Top source countries", r["top_countries"], ("Country", "Attempts")),
+           _table("Top source networks (ASN)", r["top_asns"], ("ASN", "Attempts"))]
+          if geo else []),
         _table("Top usernames", r["top_usernames"], ("Username", "Attempts")),
         _table("Top passwords", r["top_passwords"], ("Password", "Attempts")),
         _table("Top username:password pairs", r["top_pairs"], ("Pair", "Attempts")),
@@ -69,7 +93,10 @@ def to_markdown(r):
         f"### Likely brute-force sources (>= {r['brute_threshold']} attempts)\n",
     ]
     bf = r["brute_force_ips"]
-    parts.append("\n".join(f"- `{ip}`: {n} attempts" for ip, n in
+    def _bf_line(ip, n):
+        extra = f" ({country_label(r['ip_info'][ip])}, {asn_label(r['ip_info'][ip])})" if geo else ""
+        return f"- `{ip}`: {n} attempts{extra}"
+    parts.append("\n".join(_bf_line(ip, n) for ip, n in
                            sorted(bf.items(), key=lambda x: -x[1])) or "- None detected")
     parts.append("\n\n*Mapped to MITRE ATT&CK: T1110 (Brute Force), T1595 (Active Scanning).*")
     return "\n".join(parts) + "\n"
@@ -81,9 +108,23 @@ def main():
     p.add_argument("--threshold", type=int, default=5)
     p.add_argument("--output", help="write Markdown report to this file")
     p.add_argument("--json", help="write raw stats as JSON to this file")
+    g = p.add_argument_group("GeoIP / ASN enrichment (optional, offline lookups)")
+    g.add_argument("--geoip-db", help="MaxMind GeoLite2 City or Country .mmdb "
+                                      "(needs: pip install maxminddb)")
+    g.add_argument("--asn-db", help="MaxMind GeoLite2 ASN .mmdb (needs: pip install maxminddb)")
+    g.add_argument("--ip2asn", help="iptoasn.com ip2asn-combined.tsv[.gz] (no extra packages)")
     args = p.parse_args()
 
-    report = analyze(load_events(args.logfile), args.threshold)
+    geo = None
+    if args.geoip_db or args.asn_db or args.ip2asn:
+        try:
+            geo = GeoResolver.from_paths(args.geoip_db, args.asn_db, args.ip2asn)
+        except (RuntimeError, OSError, ValueError) as exc:
+            p.error(f"could not open GeoIP database: {exc}")
+
+    report = analyze(load_events(args.logfile), args.threshold, geo=geo)
+    if geo:
+        geo.close()
     md = to_markdown(report)
     if args.output:
         Path(args.output).write_text(md, encoding="utf-8")
