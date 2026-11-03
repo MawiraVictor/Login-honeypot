@@ -31,11 +31,16 @@ docs/sample_report.md       example analyser output
 ```bash
 python src/honeypot.py                      # listens on 127.0.0.1 only
 ```
+
 Try it from another terminal:
 ```bash
 telnet 127.0.0.1 2323
 curl -d "username=admin&password=test" http://127.0.0.1:8080/login
 ```
+You can also access and interact with the webpage from the web
+
+<img width="446" height="356" alt="image" src="https://github.com/user-attachments/assets/fbb38f5d-9fc9-4e3f-be4d-1452bcd3daa9" />
+
 Analyse the log:
 ```bash
 python src/analyze.py logs/events.jsonl --output report.md
