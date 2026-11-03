@@ -19,7 +19,8 @@ includes an **analyser** that turns the logs into a threat report.
 ## Project structure
 ```
 src/honeypot.py             the honeypot
-src/analyze.py              log analyser -> Markdown/JSON report
+src/analyze.py       log analyser -> Markdown/JSON report
+src/geoip.py             offline GeoIP / ASN lookups used  
 src/generate_sample_logs.py fake data for demos (documentation IP ranges only)
 tests/                      unit tests
 data/sample_events.jsonl    sample events
@@ -44,6 +45,27 @@ No logs yet? Try the demo data:
 python src/analyze.py data/sample_events.jsonl
 ```
 
+## GeoIP and ASN enrichment
+
+The analyser can label each source IP with its country and network (ASN). Lookups run offline against local database files, so nothing is sent to third parties, and the honeypot itself is untouched; old logs can be re-enriched any time.
+
+Option A – iptoasn.com (no extra packages, free, no account): download ip2asn-combined.tsv.gz from https://iptoasn.com and run
+
+```bash
+python src/analyze.py logs/events.jsonl --ip2asn ip2asn-combined.tsv.gz
+```
+Gives country, ASN number and network name (no city).
+
+Option B – MaxMind GeoLite2 (adds city): create a free MaxMind account, download the GeoLite2 City and ASN .mmdb files, then
+
+```bash
+pip install maxminddb
+python src/analyze.py logs/events.jsonl --geoip-db GeoLite2-City.mmdb --asn-db GeoLite2-ASN.mmdb
+```
+The options can be combined; the first database with a value wins.
+
+The report gains country and ASN columns on Top source IPs, plus Top source countries and Top source networks tables; --json output includes ip_info. Private, reserved and documentation addresses (such as the sample data) are labelled Private/Reserved. Database files are not bundled; GeoLite2 is subject to MaxMind's licence terms, so download your own copy and refresh it regularly.
+
 ## Running with Docker
 ```bash
 docker build -t login-honeypot .
@@ -63,7 +85,6 @@ python -m unittest discover -s tests -v
 - Only expose it to the internet if you understand your provider's rules
 
 ## Ideas to extend
-- GeoIP and ASN lookup for source IPs
 - Fake SSH service with `asyncssh`
 - Alerts to Discord/Telegram or email for brute-force bursts
 - Dashboard with Streamlit
