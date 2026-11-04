@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Honeypot logs (may contain real attacker IPs and credentials) - keep the folder
+logs/*
+!logs/.gitkeep
+
+# Generated reports
+report.md
+report.json
+
+# GeoIP / ASN databases (licensed or large; download your own)
+*.mmdb
+ip2asn*.tsv
+ip2asn*.tsv.gz
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
